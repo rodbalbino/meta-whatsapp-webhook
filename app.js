@@ -1,26 +1,39 @@
-// WhatsApp Cloud API Webhook (Express)
-// - GET  /webhook  : Meta verification (hub.challenge)
-// - POST /webhook  : Receive events (messages)
-// - GET  /health   : Healthcheck
+// WhatsApp Cloud API Webhook (Express) + Router + OpenAI fallback
 
 const express = require('express');
 
-// Create an Express app
 const app = express();
-
-// Middleware to parse JSON bodies
 app.use(express.json({ limit: '1mb' }));
 
-// Config
+// ================= CONFIG =================
 const port = process.env.PORT || 3000;
 const verifyToken = process.env.VERIFY_TOKEN;
-const graphVersion = process.env.GRAPH_VERSION || 'v19.0';
+const graphVersion = process.env.GRAPH_VERSION || 'v22.0';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-if (!verifyToken) {
-  console.warn('[WARN] VERIFY_TOKEN is not set. Webhook verification will fail.');
+// ======== SIMPLE BUSINESS CONFIG (EDIT) ========
+const BUSINESS = {
+  name: "Jasper's Market",
+  address: "Rua Exemplo, 123 - Maringá",
+  hours: "Seg a Sex 08h às 18h",
+};
+
+// ================= MEMORY =================
+const historyMap = new Map();
+const MAX_HISTORY = 10;
+
+function pushHistory(from, role, content) {
+  const h = historyMap.get(from) || [];
+  h.push({ role, content });
+  if (h.length > MAX_HISTORY) h.shift();
+  historyMap.set(from, h);
 }
 
-// In-memory dedupe (OK for MVP). For production, move to Redis/Postgres.
+function getHistory(from) {
+  return historyMap.get(from) || [];
+}
+
+// ================= DEDUPE =================
 const processedMessageIds = new Set();
 const MAX_DEDUPE_SIZE = 5000;
 
@@ -28,190 +41,190 @@ function dedupeSeen(id) {
   if (!id) return false;
   if (processedMessageIds.has(id)) return true;
   processedMessageIds.add(id);
-  // Prevent unbounded growth
-  if (processedMessageIds.size > MAX_DEDUPE_SIZE) {
-    // naive trim: clear all (good enough for MVP)
-    processedMessageIds.clear();
-  }
+  if (processedMessageIds.size > MAX_DEDUPE_SIZE) processedMessageIds.clear();
   return false;
 }
 
+// ================= HELPERS =================
 function nowStamp() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function normalizeBRNumber(n) {
   if (!n) return n;
-
-  // remove qualquer coisa que não seja dígito
   n = String(n).replace(/[^\d]/g, '');
-
-  // se começar com 55 e tiver 12 dígitos (DDD + 8 dígitos),
-  // provavelmente está sem o 9 do celular brasileiro
   if (n.startsWith('55') && n.length === 12) {
     const ddd = n.slice(2, 4);
     const rest = n.slice(4);
     return `55${ddd}9${rest}`;
   }
-
   return n;
 }
 
-// Node 18+ has global fetch. Provide a fallback if needed.
 async function getFetch() {
   if (typeof fetch === 'function') return fetch;
-  // Lazy-load node-fetch if the runtime is older
   const mod = await import('node-fetch');
   return mod.default;
 }
 
-async function sendWhatsAppText({ phoneNumberId, to, body }) {
-  const token = process.env.WHATSAPP_TOKEN;
-  if (!token) {
-    throw new Error('WHATSAPP_TOKEN is not set');
-  }
-  if (!phoneNumberId) {
-    throw new Error('phoneNumberId is missing');
-  }
-  if (!to) {
-    throw new Error('recipient (to) is missing');
+// ================= ROUTER =================
+function routeMessage(text) {
+  const t = text.toLowerCase();
+
+  if (/humano|atendente|pessoa/.test(t)) {
+    return { type: 'handoff', reply: 'Ok 👍 vou chamar um atendente humano.' };
   }
 
-  const f = await getFetch();
-  const url = `https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`;
-  
-  let requestBody = { 
-      messaging_product: 'whatsapp',
-      to: to,
-      type: 'text',
-      text: { body },
-    };
-  console.log(requestBody)
-  
-  const resp = await f(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to: to,
-      type: 'text',
-      text: { body },
-    }),
-  });
-
-  const text = await resp.text();
-  if (!resp.ok) {
-    throw new Error(`Graph API error ${resp.status}: ${text}`);
+  if (/endereço|localização|onde fica|maps/.test(t)) {
+    return { type: 'static', reply: `Nosso endereço é: ${BUSINESS.address}` };
   }
 
-  return text;
+  if (/horário|abre|fecha|funciona/.test(t)) {
+    return { type: 'static', reply: `Nosso horário é: ${BUSINESS.hours}` };
+  }
+
+  return { type: 'ai' };
 }
 
-// Healthcheck
+// ================= OPENAI =================
+async function generateAIReply({ from, text }) {
+  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
+
+  const f = await getFetch();
+
+  const history = getHistory(from);
+
+  const messages = [
+    {
+      role: 'system',
+      content: `Você é um atendente educado do ${BUSINESS.name}. Responda curto, claro e útil.`
+    },
+    ...history,
+    { role: 'user', content: text }
+  ];
+
+  const resp = await f('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.7
+    })
+  });
+
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    throw new Error(`OpenAI error: ${JSON.stringify(data)}`);
+  }
+
+  const reply = data.choices?.[0]?.message?.content || 'Não consegui responder agora 😅';
+
+  pushHistory(from, 'user', text);
+  pushHistory(from, 'assistant', reply);
+
+  return reply;
+}
+
+// ================= WHATSAPP SEND =================
+async function sendWhatsAppText({ phoneNumberId, to, body }) {
+  const token = process.env.WHATSAPP_TOKEN;
+  if (!token) throw new Error('WHATSAPP_TOKEN missing');
+
+  const f = await getFetch();
+
+  const resp = await f(
+    `https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body },
+      }),
+    }
+  );
+
+  const txt = await resp.text();
+  if (!resp.ok) throw new Error(`Graph API error ${resp.status}: ${txt}`);
+}
+
+// ================= ROUTES =================
 app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true, ts: nowStamp() });
+  res.json({ ok: true, ts: nowStamp() });
 });
 
-// Webhook verification (Meta)
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token && token === verifyToken) {
+  if (mode === 'subscribe' && token === verifyToken) {
     console.log(`[${nowStamp()}] WEBHOOK VERIFIED`);
     return res.status(200).send(challenge);
   }
 
-  console.warn(`[${nowStamp()}] WEBHOOK VERIFICATION FAILED`, {
-    mode,
-    token_present: Boolean(token),
-  });
   return res.status(403).end();
 });
 
-// Webhook receiver
 app.post('/webhook', async (req, res) => {
-  // ACK fast
   res.status(200).end();
-
   const ts = nowStamp();
 
   try {
-    const body = req.body;
+    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
 
-    // Safely walk the payload
-    const value = body?.entry?.[0]?.changes?.[0]?.value;
-
-    // Ignore non-message updates (e.g., statuses)
-    if (!value?.messages || !Array.isArray(value.messages) || value.messages.length === 0) {
-      // Useful for debugging, but not too noisy
-      const hasStatuses = Boolean(value?.statuses?.length);
-      console.log(`[${ts}] Event received (ignored)`, { hasStatuses });
-      return;
-    }
+    if (!value?.messages?.length) return;
 
     const msg = value.messages[0];
 
     const messageId = msg?.id;
     const from = normalizeBRNumber(msg?.from);
-    const type = msg?.type;
     const textBody = msg?.text?.body;
+    const type = msg?.type;
     const phoneNumberId = value?.metadata?.phone_number_id;
 
-    if (dedupeSeen(messageId)) {
-      console.log(`[${ts}] Duplicate message ignored`, { messageId });
-      return;
-    }
+    if (dedupeSeen(messageId)) return;
 
-    console.log(`[${ts}] Message received`, {
-      messageId,
-      from,
-      type,
-      phoneNumberId,
-      text: textBody,
-    });
+    console.log(`[${ts}] Message`, { from, textBody });
 
-    // MVP: respond only to text messages
     if (type !== 'text' || !textBody) {
       await sendWhatsAppText({
         phoneNumberId,
         to: from,
-        body: 'Recebi sua mensagem 👍 (por enquanto eu respondo só texto).',
+        body: 'Recebi 👍 mas só entendo texto por enquanto.'
       });
-      console.log(`[${ts}] Reply sent (non-text fallback)`, { to: from, messageId });
       return;
     }
 
-    // Simple echo reply (replace with router + LLM later)
-    const reply = `Recebi: "${textBody}" 🚀`;
+    const route = routeMessage(textBody);
 
-    await sendWhatsAppText({
-      phoneNumberId,
-      to: from,
-      body: reply,
-    });
+    let reply;
 
-    console.log(`[${ts}] Reply sent`, { to: from, messageId });
+    if (route.type === 'static' || route.type === 'handoff') {
+      reply = route.reply;
+    } else {
+      reply = await generateAIReply({ from, text: textBody });
+    }
+
+    await sendWhatsAppText({ phoneNumberId, to: from, body: reply });
+
+    console.log(`[${ts}] Reply sent`, { to: from });
+
   } catch (err) {
-    console.error(`[${ts}] Webhook processing error`, {
-      error: err?.message || String(err),
-    });
+    console.error(`[${ts}] ERROR`, err.message);
   }
 });
 
-// Root (optional)
-app.get('/', (_req, res) => {
-  res.status(200).send('OK');
-});
-
-// Start the server
 app.listen(port, () => {
-  console.log(`\nListening on port ${port}`);
-  console.log(`Webhook verify: GET  /webhook`);
-  console.log(`Webhook events: POST /webhook`);
-  console.log(`Healthcheck:    GET  /health\n`);
+  console.log(`Listening on ${port}`);
 });
