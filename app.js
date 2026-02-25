@@ -97,7 +97,17 @@ async function generateAIReply({ from, text }) {
   const messages = [
     {
       role: 'system',
-      content: `Você é um atendente educado do ${BUSINESS.name}. Responda curto, claro e útil.`
+      content: `Você é um atendente educado do ${BUSINESS.name}.
+
+Informações oficiais da empresa (NUNCA invente outras):
+- Endereço: ${BUSINESS.address}
+- Horário: ${BUSINESS.hours}
+
+Regras:
+- Sempre use APENAS essas informações quando perguntarem endereço ou horário.
+- Nunca invente endereço, horário, telefone ou preços.
+- Se não souber algo, peça mais detalhes.
+- Responda curto, claro e amigável.`
     },
     ...history,
     { role: 'user', content: text }
