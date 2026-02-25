@@ -40,6 +40,23 @@ function nowStamp() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function normalizeBRNumber(n) {
+  if (!n) return n;
+
+  // remove qualquer coisa que não seja dígito
+  n = String(n).replace(/[^\d]/g, '');
+
+  // se começar com 55 e tiver 12 dígitos (DDD + 8 dígitos),
+  // provavelmente está sem o 9 do celular brasileiro
+  if (n.startsWith('55') && n.length === 12) {
+    const ddd = n.slice(2, 4);
+    const rest = n.slice(4);
+    return `55${ddd}9${rest}`;
+  }
+
+  return n;
+}
+
 // Node 18+ has global fetch. Provide a fallback if needed.
 async function getFetch() {
   if (typeof fetch === 'function') return fetch;
@@ -140,7 +157,7 @@ app.post('/webhook', async (req, res) => {
     const msg = value.messages[0];
 
     const messageId = msg?.id;
-    const from = msg?.from;
+    const from = normalizeBRNumber(msg?.from);
     const type = msg?.type;
     const textBody = msg?.text?.body;
     const phoneNumberId = value?.metadata?.phone_number_id;
