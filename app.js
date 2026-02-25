@@ -62,7 +62,15 @@ async function sendWhatsAppText({ phoneNumberId, to, body }) {
 
   const f = await getFetch();
   const url = `https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`;
-
+  
+  let requestBody = { 
+      messaging_product: 'whatsapp',
+      to: to,
+      type: 'text',
+      text: { body },
+    };
+  console.log(requestBody)
+  
   const resp = await f(url, {
     method: 'POST',
     headers: {
@@ -71,7 +79,7 @@ async function sendWhatsAppText({ phoneNumberId, to, body }) {
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      to: to,
       type: 'text',
       text: { body },
     }),
