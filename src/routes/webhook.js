@@ -1,20 +1,15 @@
 const express = require('express');
+const { getBusiness } = require('../config/business');
+const { resolveTenantIdByPhoneNumberId } = require('../config/tenants');
+const { createIntentHelpers } = require('../domain/intents');
 
 function createWebhookRouter({
-  BUSINESS,
   clearBooking,
   cleanText,
   dedupeSeen,
-  detectIntent,
-  extractService,
-  extractTime,
   generateAIReply,
   getState,
-  looksLikeDate,
-  looksLikeTime,
-  menuText,
   normalizeBRNumber,
-  normalizeMenuChoice,
   nowStamp,
   sendWhatsAppText,
   setState,
@@ -46,17 +41,26 @@ function createWebhookRouter({
     try {
       const value = req.body?.entry?.[0]?.changes?.[0]?.value;
       if (!value?.messages?.length) return;
+      const phoneNumberId = value?.metadata?.phone_number_id;
+      const tenantId = resolveTenantIdByPhoneNumberId(phoneNumberId);
+
+      if (!tenantId) {
+        console.warn(`[${ts}] Unknown tenant`, { phoneNumberId });
+        return;
+      }
+
+      const business = getBusiness(tenantId);
+      const intents = createIntentHelpers(business);
 
       const msg = value.messages[0];
       const messageId = msg?.id;
       const from = normalizeBRNumber(msg?.from);
       const textBody = cleanText(msg?.text?.body);
       const type = msg?.type;
-      const phoneNumberId = value?.metadata?.phone_number_id;
 
       if (dedupeSeen(messageId)) return;
 
-      console.log(`[${ts}] Message`, { from, type, textBody });
+      console.log(`[${ts}] Message`, { tenantId, from, type, textBody });
 
       if (type !== 'text' || !textBody) {
         await sendWhatsAppText({
@@ -67,31 +71,31 @@ function createWebhookRouter({
         return;
       }
 
-      const menuChoice = normalizeMenuChoice(textBody);
+      const menuChoice = intents.normalizeMenuChoice(textBody);
       const effectiveText = menuChoice || textBody;
-      const state = getState(from);
+      const state = getState(tenantId, from);
 
-      if (detectIntent(effectiveText) === 'reset') {
-        setState(from, { handoff: false, booking: null });
+      if (intents.detectIntent(effectiveText) === 'reset') {
+        setState(tenantId, from, { handoff: false, booking: null });
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
-          body: `Pronto ✅ resetado. Como posso te ajudar?\n\n${menuText()}`,
+          body: `Pronto ✅ resetado. Como posso te ajudar?\n\n${intents.menuText()}`,
         });
         return;
       }
 
-      if (detectIntent(effectiveText) === 'bot_on') {
-        setState(from, { handoff: false });
+      if (intents.detectIntent(effectiveText) === 'bot_on') {
+        setState(tenantId, from, { handoff: false });
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
-          body: `Fechado 🤖 Voltei! Como posso te ajudar?\n\n${menuText()}`,
+          body: `Fechado 🤖 Voltei! Como posso te ajudar?\n\n${intents.menuText()}`,
         });
         return;
       }
 
-      if (BUSINESS.handoff.enabled && state.handoff) {
+      if (business.handoff.enabled && state.handoff) {
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
@@ -100,26 +104,26 @@ function createWebhookRouter({
         return;
       }
 
-      if (BUSINESS.booking.enabled && state.booking) {
+      if (business.booking.enabled && state.booking) {
         const booking = { ...state.booking };
 
         if (!booking.service) {
-          const service = extractService(textBody);
+          const service = intents.extractService(textBody);
           if (service) booking.service = service.name;
         }
-        if (!booking.date && looksLikeDate(textBody)) booking.date = textBody;
-        if (!booking.time && looksLikeTime(textBody)) booking.time = extractTime(textBody) || textBody;
-        if (!booking.name && textBody.length >= 2 && !looksLikeDate(textBody) && !looksLikeTime(textBody)) {
+        if (!booking.date && intents.looksLikeDate(textBody)) booking.date = textBody;
+        if (!booking.time && intents.looksLikeTime(textBody)) booking.time = intents.extractTime(textBody) || textBody;
+        if (!booking.name && textBody.length >= 2 && !intents.looksLikeDate(textBody) && !intents.looksLikeTime(textBody)) {
           booking.name = textBody;
         }
 
         const missing = [];
-        for (const key of BUSINESS.booking.require) {
+        for (const key of business.booking.require) {
           if (!booking[key]) missing.push(key);
         }
 
         if (missing.length === 0) {
-          clearBooking(from);
+          clearBooking(tenantId, from);
           const summary =
             '✅ Pedido de agendamento:\n' +
             `- Nome: ${booking.name}\n` +
@@ -130,12 +134,12 @@ function createWebhookRouter({
           await sendWhatsAppText({
             phoneNumberId,
             to: from,
-            body: `${summary}\n\n${BUSINESS.booking.confirmText}`,
+            body: `${summary}\n\n${business.booking.confirmText}`,
           });
           return;
         }
 
-        setState(from, { booking });
+        setState(tenantId, from, { booking });
 
         const next = missing[0];
         if (next === 'service') {
@@ -179,16 +183,16 @@ function createWebhookRouter({
         return;
       }
 
-      const intent = detectIntent(effectiveText);
+      const intent = intents.detectIntent(effectiveText);
 
       if (intent === 'menu') {
-        await sendWhatsAppText({ phoneNumberId, to: from, body: menuText() });
+        await sendWhatsAppText({ phoneNumberId, to: from, body: intents.menuText() });
         return;
       }
 
       if (intent === 'handoff') {
-        setState(from, { handoff: true, booking: null });
-        await sendWhatsAppText({ phoneNumberId, to: from, body: BUSINESS.handoff.message });
+        setState(tenantId, from, { handoff: true, booking: null });
+        await sendWhatsAppText({ phoneNumberId, to: from, body: business.handoff.message });
         return;
       }
 
@@ -196,7 +200,7 @@ function createWebhookRouter({
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
-          body: `Nosso endereço é: ${BUSINESS.address}\nMapa: ${BUSINESS.addressLink}`,
+          body: `Nosso endereço é: ${business.address}\nMapa: ${business.addressLink}`,
         });
         return;
       }
@@ -205,13 +209,13 @@ function createWebhookRouter({
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
-          body: `Nosso horário é: ${BUSINESS.hours}`,
+          body: `Nosso horário é: ${business.hours}`,
         });
         return;
       }
 
       if (intent === 'price') {
-        const service = extractService(textBody);
+        const service = intents.extractService(textBody);
         if (service && service.price) {
           await sendWhatsAppText({
             phoneNumberId,
@@ -221,20 +225,20 @@ function createWebhookRouter({
           return;
         }
 
-        const options = (BUSINESS.catalog.services || []).map((x) => `- ${x.name}`).join('\n');
+        const options = (business.catalog.services || []).map((x) => `- ${x.name}`).join('\n');
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
           body:
             'Consigo te ajudar 🙂 Qual serviço você quer orçamento?\n\n' +
             `${options}\n\n` +
-            BUSINESS.catalog.notes,
+            business.catalog.notes,
         });
         return;
       }
 
       if (intent === 'booking') {
-        setState(from, {
+        setState(tenantId, from, {
           booking: { service: null, date: null, time: null, name: null },
         });
 
@@ -258,20 +262,20 @@ function createWebhookRouter({
       }
 
       if (/mais cedo|cedo|antes das|antes de\s*0?8/.test(effectiveText.toLowerCase())) {
-        await sendWhatsAppText({ phoneNumberId, to: from, body: BUSINESS.policies.earlyOpen });
+        await sendWhatsAppText({ phoneNumberId, to: from, body: business.policies.earlyOpen });
         return;
       }
 
       if (/sábado|sabado|domingo|fim de semana/.test(effectiveText.toLowerCase())) {
-        await sendWhatsAppText({ phoneNumberId, to: from, body: BUSINESS.policies.weekend });
+        await sendWhatsAppText({ phoneNumberId, to: from, body: business.policies.weekend });
         return;
       }
 
-      const reply = await generateAIReply({ from, text: textBody });
+      const reply = await generateAIReply({ tenantId, business, from, text: textBody });
 
       if (/humano|atendente|pessoa|suporte/i.test(textBody)) {
-        setState(from, { handoff: true, booking: null });
-        await sendWhatsAppText({ phoneNumberId, to: from, body: BUSINESS.handoff.message });
+        setState(tenantId, from, { handoff: true, booking: null });
+        await sendWhatsAppText({ phoneNumberId, to: from, body: business.handoff.message });
         return;
       }
 

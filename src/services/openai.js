@@ -1,30 +1,31 @@
 function createGenerateAIReply({
-  BUSINESS,
   getFetch,
   getHistory,
   openaiApiKey,
   pushHistory,
 }) {
-  return async function generateAIReply({ from, text }) {
+  return async function generateAIReply({ tenantId, business, from, text }) {
     if (!openaiApiKey) throw new Error('OPENAI_API_KEY missing');
+    if (!business) throw new Error('business missing');
+    if (!tenantId) throw new Error('tenantId missing');
 
     const f = await getFetch();
-    const history = getHistory(from);
+    const history = getHistory(tenantId, from);
 
-    const system = `Você é um atendente do ${BUSINESS.name}.
+    const system = `Você é um atendente do ${business.name}.
 
 Informações oficiais (NUNCA invente outras):
-- Nome: ${BUSINESS.name}
-- Descrição: ${BUSINESS.shortDescription}
-- Endereço: ${BUSINESS.address}
-- Link do endereço (se pedir mapa): ${BUSINESS.addressLink}
-- Horário: ${BUSINESS.hours}
-- Política (abrir mais cedo): ${BUSINESS.policies.earlyOpen}
-- Política (fim de semana): ${BUSINESS.policies.weekend}
+- Nome: ${business.name}
+- Descrição: ${business.shortDescription}
+- Endereço: ${business.address}
+- Link do endereço (se pedir mapa): ${business.addressLink}
+- Horário: ${business.hours}
+- Política (abrir mais cedo): ${business.policies.earlyOpen}
+- Política (fim de semana): ${business.policies.weekend}
 
 Catálogo (se perguntarem preço/serviço, peça detalhes se necessário):
-${(BUSINESS.catalog.services || []).map((s) => `- ${s.name}${s.price ? `: R$ ${s.price}` : ''}`).join('\n')}
-Observação: ${BUSINESS.catalog.notes}
+${(business.catalog.services || []).map((s) => `- ${s.name}${s.price ? `: R$ ${s.price}` : ''}`).join('\n')}
+Observação: ${business.catalog.notes}
 
 Regras:
 - Endereço/horário: use APENAS os oficiais.
@@ -57,8 +58,8 @@ Regras:
 
     const reply = data.choices?.[0]?.message?.content?.trim() || 'Não consegui responder agora 😅';
 
-    pushHistory(from, 'user', text);
-    pushHistory(from, 'assistant', reply);
+    pushHistory(tenantId, from, 'user', text);
+    pushHistory(tenantId, from, 'assistant', reply);
 
     return reply;
   };
