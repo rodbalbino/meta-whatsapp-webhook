@@ -3,6 +3,10 @@ const { getBusiness } = require('../config/business');
 const { resolveTenantIdByPhoneNumberId } = require('../config/tenants');
 const { createIntentHelpers } = require('../domain/intents');
 
+function oneLine(data) {
+  return JSON.stringify(data);
+}
+
 function createWebhookRouter({
   clearBooking,
   cleanText,
@@ -45,7 +49,7 @@ function createWebhookRouter({
       const tenantId = resolveTenantIdByPhoneNumberId(phoneNumberId);
 
       if (!tenantId) {
-        console.warn(`[${ts}] Unknown tenant`, { phoneNumberId });
+        console.warn(`[${ts}] Unknown tenant ${oneLine({ phoneNumberId })}`);
         return;
       }
 
@@ -60,7 +64,7 @@ function createWebhookRouter({
 
       if (dedupeSeen(messageId)) return;
 
-      console.log(`[${ts}] Message`, { tenantId, from, type, textBody });
+      console.log(`[${ts}] Message ${oneLine({ tenantId, from, type, textBody })}`);
 
       if (type !== 'text' || !textBody) {
         await sendWhatsAppText({
@@ -281,7 +285,7 @@ function createWebhookRouter({
 
       await sendWhatsAppText({ phoneNumberId, to: from, body: reply });
     } catch (err) {
-      console.error(`[${ts}] ERROR`, err?.message || String(err));
+      console.error(`[${ts}] ERROR ${oneLine({ message: err?.message || String(err) })}`);
     }
   });
 
