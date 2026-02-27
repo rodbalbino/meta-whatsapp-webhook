@@ -18,8 +18,13 @@ function createWebhookRouter({
   sendWhatsAppText,
   setState,
   verifyToken,
+  webhookDebugLogs = false,
 }) {
   const router = express.Router();
+  const debugLog = (label, data) => {
+    if (!webhookDebugLogs) return;
+    console.log(`[${nowStamp()}] ${label}${data ? ` ${oneLine(data)}` : ''}`);
+  };
 
   router.get('/health', (_req, res) => {
     res.json({ ok: true, ts: nowStamp() });
@@ -31,7 +36,7 @@ function createWebhookRouter({
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe' && token === verifyToken) {
-      console.log(`[${nowStamp()}] WEBHOOK VERIFIED`);
+      debugLog('WEBHOOK VERIFIED');
       return res.status(200).send(challenge);
     }
 
@@ -47,27 +52,28 @@ function createWebhookRouter({
       if (!value?.messages?.length) return;
       const phoneNumberId = value?.metadata?.phone_number_id;
       const tenantId = resolveTenantIdByPhoneNumberId(phoneNumberId);
-
-      if (!tenantId) {
-        console.warn(`[${ts}] Unknown tenant ${oneLine({ phoneNumberId })}`);
-        return;
-      }
-
-      const business = getBusiness(tenantId);
-      const intents = createIntentHelpers(business);
-
       const msg = value.messages[0];
       const messageId = msg?.id;
       const from = normalizeBRNumber(msg?.from);
       const textBody = cleanText(msg?.text?.body);
       const type = msg?.type;
 
-      if (dedupeSeen(messageId)) {
-        console.log(`[${ts}] Deduped ${oneLine({ tenantId, messageId, from, type })}`);
+      debugLog('Incoming', { phoneNumberId, messageId, from, type });
+
+      if (!tenantId) {
+        debugLog('Unknown tenant', { phoneNumberId });
         return;
       }
 
-      console.log(`[${ts}] Message ${oneLine({ tenantId, from, type, textBody })}`);
+      const business = getBusiness(tenantId);
+      const intents = createIntentHelpers(business);
+
+      if (dedupeSeen(messageId)) {
+        debugLog('Deduped', { tenantId, messageId, from, type });
+        return;
+      }
+
+      debugLog('Message', { tenantId, from, type, textBody });
 
       if (type !== 'text' || !textBody) {
         await sendWhatsAppText({

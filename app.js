@@ -1,5 +1,5 @@
 const express = require('express');
-const { graphVersion, openaiApiKey, port, verifyToken } = require('./src/config/env');
+const { graphVersion, openaiApiKey, port, verifyToken, webhookDebugLogs } = require('./src/config/env');
 const { createWebhookRouter } = require('./src/routes/webhook');
 const { createGenerateAIReply } = require('./src/services/openai');
 const { createSendWhatsAppText } = require('./src/services/whatsapp');
@@ -34,6 +34,7 @@ app.use(
     sendWhatsAppText,
     setState: store.setState,
     verifyToken,
+    webhookDebugLogs,
   }),
 );
 
