@@ -20,26 +20,30 @@ async function ensureContact(waId) {
 }
 
 function createPgStore() {
+  async function getStateInternal(tenantId, from) {
+    const fallback = memoryStore.getState(tenantId, from);
+    if (!hasDatabase()) return fallback;
+
+    try {
+      const { rows } = await pool.query(
+        'select state from conversation_state where wa_id = $1',
+        [key(tenantId, from)],
+      );
+      const persisted = rows[0]?.state;
+      if (!persisted || typeof persisted !== 'object') return fallback;
+      return { ...fallback, ...persisted };
+    } catch {
+      return fallback;
+    }
+  }
+
   return {
     async getState(tenantId, from) {
-      const fallback = memoryStore.getState(tenantId, from);
-      if (!hasDatabase()) return fallback;
-
-      try {
-        const { rows } = await pool.query(
-          'select state from conversation_state where wa_id = $1',
-          [key(tenantId, from)],
-        );
-        const persisted = rows[0]?.state;
-        if (!persisted || typeof persisted !== 'object') return fallback;
-        return { ...fallback, ...persisted };
-      } catch {
-        return fallback;
-      }
+      return getStateInternal(tenantId, from);
     },
 
     async setState(tenantId, from, patch) {
-      const current = await this.getState(tenantId, from);
+      const current = await getStateInternal(tenantId, from);
       const next = { ...current, ...patch };
       memoryStore.setState(tenantId, from, patch);
       if (!hasDatabase()) return;
@@ -61,7 +65,7 @@ function createPgStore() {
     },
 
     async clearBooking(tenantId, from) {
-      const current = await this.getState(tenantId, from);
+      const current = await getStateInternal(tenantId, from);
       const next = { ...current, booking: null };
       memoryStore.clearBooking(tenantId, from);
       if (!hasDatabase()) return;
