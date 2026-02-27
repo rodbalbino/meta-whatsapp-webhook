@@ -62,7 +62,10 @@ function createWebhookRouter({
       const textBody = cleanText(msg?.text?.body);
       const type = msg?.type;
 
-      if (dedupeSeen(messageId)) return;
+      if (dedupeSeen(messageId)) {
+        console.log(`[${ts}] Deduped ${oneLine({ tenantId, messageId, from, type })}`);
+        return;
+      }
 
       console.log(`[${ts}] Message ${oneLine({ tenantId, from, type, textBody })}`);
 
