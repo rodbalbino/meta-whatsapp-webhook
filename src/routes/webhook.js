@@ -68,7 +68,7 @@ function createWebhookRouter({
       const business = getBusiness(tenantId);
       const intents = createIntentHelpers(business);
 
-      if (dedupeSeen(messageId)) {
+      if (await dedupeSeen(messageId)) {
         debugLog('Deduped', { tenantId, messageId, from, type });
         return;
       }
@@ -86,10 +86,10 @@ function createWebhookRouter({
 
       const menuChoice = intents.normalizeMenuChoice(textBody);
       const effectiveText = menuChoice || textBody;
-      const state = getState(tenantId, from);
+      const state = await getState(tenantId, from);
 
       if (intents.detectIntent(effectiveText) === 'reset') {
-        setState(tenantId, from, { handoff: false, booking: null });
+        await setState(tenantId, from, { handoff: false, booking: null });
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
@@ -99,7 +99,7 @@ function createWebhookRouter({
       }
 
       if (intents.detectIntent(effectiveText) === 'bot_on') {
-        setState(tenantId, from, { handoff: false });
+        await setState(tenantId, from, { handoff: false });
         await sendWhatsAppText({
           phoneNumberId,
           to: from,
@@ -136,7 +136,7 @@ function createWebhookRouter({
         }
 
         if (missing.length === 0) {
-          clearBooking(tenantId, from);
+          await clearBooking(tenantId, from);
           const summary =
             '✅ Pedido de agendamento:\n' +
             `- Nome: ${booking.name}\n` +
@@ -152,7 +152,7 @@ function createWebhookRouter({
           return;
         }
 
-        setState(tenantId, from, { booking });
+        await setState(tenantId, from, { booking });
 
         const next = missing[0];
         if (next === 'service') {
@@ -204,7 +204,7 @@ function createWebhookRouter({
       }
 
       if (intent === 'handoff') {
-        setState(tenantId, from, { handoff: true, booking: null });
+        await setState(tenantId, from, { handoff: true, booking: null });
         await sendWhatsAppText({ phoneNumberId, to: from, body: business.handoff.message });
         return;
       }
@@ -251,7 +251,7 @@ function createWebhookRouter({
       }
 
       if (intent === 'booking') {
-        setState(tenantId, from, {
+        await setState(tenantId, from, {
           booking: { service: null, date: null, time: null, name: null },
         });
 
@@ -287,7 +287,7 @@ function createWebhookRouter({
       const reply = await generateAIReply({ tenantId, business, from, text: textBody });
 
       if (/humano|atendente|pessoa|suporte/i.test(textBody)) {
-        setState(tenantId, from, { handoff: true, booking: null });
+        await setState(tenantId, from, { handoff: true, booking: null });
         await sendWhatsAppText({ phoneNumberId, to: from, body: business.handoff.message });
         return;
       }

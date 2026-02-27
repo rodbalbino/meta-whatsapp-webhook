@@ -3,7 +3,12 @@ const { graphVersion, openaiApiKey, port, verifyToken, webhookDebugLogs } = requ
 const { createWebhookRouter } = require('./src/routes/webhook');
 const { createGenerateAIReply } = require('./src/services/openai');
 const { createSendWhatsAppText } = require('./src/services/whatsapp');
-const store = require('./src/state/store');
+const memoryStore = require('./src/state/memoryStore');
+const { createPgStore } = require('./src/state/pgStore');
+
+const store = process.env.STORE_DRIVER === 'pg'
+  ? createPgStore()
+  : memoryStore;
 const { getFetch } = require('./src/utils/fetch');
 const { cleanText, normalizeBRNumber, nowStamp } = require('./src/utils/text');
 

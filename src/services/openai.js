@@ -10,7 +10,7 @@ function createGenerateAIReply({
     if (!tenantId) throw new Error('tenantId missing');
 
     const f = await getFetch();
-    const history = getHistory(tenantId, from);
+    const history = await getHistory(tenantId, from);
 
     const system = `Você é um atendente do ${business.name}.
 
@@ -58,8 +58,8 @@ Regras:
 
     const reply = data.choices?.[0]?.message?.content?.trim() || 'Não consegui responder agora 😅';
 
-    pushHistory(tenantId, from, 'user', text);
-    pushHistory(tenantId, from, 'assistant', reply);
+    await pushHistory(tenantId, from, 'user', text);
+    await pushHistory(tenantId, from, 'assistant', reply);
 
     return reply;
   };
